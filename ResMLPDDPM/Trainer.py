@@ -11,7 +11,7 @@ from sklearn.decomposition import PCA
 
 
 from Diffusion import GaussianDiffusionSampler, GaussianDiffusionTrainer
-from DDPMModel import UNet
+from ResMLPModel import ResMLP
 from Scheduler import GradualWarmupScheduler
 from Dataset import VectorDataset
 
@@ -23,9 +23,7 @@ def train(modelConfig: Dict):
     dataloader = DataLoader(
         dataset, batch_size=modelConfig["batch_size"], shuffle=True, num_workers=4, drop_last=True, pin_memory=True)
 
-    # MODIFIED: model setup for 1D UNet (removed attn)
-    net_model = UNet(T=modelConfig["T"], ch=modelConfig["channel"], ch_mult=modelConfig["channel_mult"],
-                     num_res_blocks=modelConfig["num_res_blocks"], dropout=modelConfig["dropout"]).to(device)
+    net_model = ResMLP(T=modelConfig["T"], data_dim=modelConfig["data_len"], num_blocks=4).to(device)
 
     if modelConfig["training_load_weight"] is not None:
         net_model.load_state_dict(torch.load(os.path.join(
@@ -68,8 +66,7 @@ def eval(modelConfig: Dict):
     device = torch.device(modelConfig["device"])
 
     # Load Model
-    model = UNet(T=modelConfig["T"], ch=modelConfig["channel"], ch_mult=modelConfig["channel_mult"],
-                 num_res_blocks=modelConfig["num_res_blocks"], dropout=0.)
+    model = ResMLP(T=modelConfig["T"], data_dim=modelConfig["data_len"], num_blocks=4).to(device)
     ckpt = torch.load(os.path.join(modelConfig["save_weight_dir"], modelConfig["test_load_weight"]),
                       map_location=device)
     model.load_state_dict(ckpt)
@@ -146,13 +143,14 @@ if __name__ == '__main__':
         "T": 1000,
         "channel": 128,
         "channel_mult": [1, 2, 2, 4],  # For 256 -> 128 -> 64 -> 32 -> 16
+        # REMOVED: "attn": [2],
         "num_res_blocks": 2,
         "dropout": 0.1,
         "lr": 1e-4,
         "multiplier": 2.,
         "beta_1": 1e-4,
         "beta_T": 0.02,
-        "data_len": 256,
+        "data_len": 256,  # MODIFIED: from img_size
         "grad_clip": 1.,
         "device": 'cuda:0' if torch.cuda.is_available() else 'cpu',
         "training_load_weight": None,

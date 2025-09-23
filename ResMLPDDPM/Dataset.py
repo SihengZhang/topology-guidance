@@ -27,9 +27,5 @@ class VectorDataset(Dataset):
         # Load the tensor from the file
         vector = torch.load(file_path)
 
-        # Ensure the vector has a channel dimension: (1, 256)
-        if vector.dim() == 1:
-            vector = vector.unsqueeze(0)
-
         # Return 0 for the label, as it's unused
         return vector, 0
