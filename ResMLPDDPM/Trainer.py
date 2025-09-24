@@ -40,7 +40,9 @@ def train(modelConfig: Dict):
         net_model, modelConfig["beta_1"], modelConfig["beta_T"], modelConfig["T"]).to(device)
 
     # start training
+    best_loss = float("inf")
     for e in range(modelConfig["epoch"]):
+        e_loss = 0
         with tqdm(dataloader, dynamic_ncols=True) as tqdmDataLoader:
             for data, labels in tqdmDataLoader:
                 optimizer.zero_grad()
@@ -48,6 +50,7 @@ def train(modelConfig: Dict):
                 # MODIFIED: Using mean() is more standard than sum() / 1000
                 loss = trainer(x_0).mean()
                 loss.backward()
+                e_loss += loss.item()
                 torch.nn.utils.clip_grad_norm_(
                     net_model.parameters(), modelConfig["grad_clip"])
                 optimizer.step()
@@ -58,8 +61,10 @@ def train(modelConfig: Dict):
                     "LR": optimizer.state_dict()['param_groups'][0]["lr"]
                 })
         warmUpScheduler.step()
-        torch.save(net_model.state_dict(), os.path.join(
-            modelConfig["save_weight_dir"], 'ckpt_1d_' + str(e) + "_.pt"))
+        if e_loss < best_loss:
+            best_loss = e_loss
+            torch.save(net_model.state_dict(), os.path.join(
+                modelConfig["save_weight_dir"], 'ckpt_1d_' + "_.pt"))
 
 
 def eval(modelConfig: Dict):
