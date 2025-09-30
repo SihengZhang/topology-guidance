@@ -39,32 +39,76 @@ def train(modelConfig: Dict):
     trainer = GaussianDiffusionTrainer(
         net_model, modelConfig["beta_1"], modelConfig["beta_T"], modelConfig["T"]).to(device)
 
+    # MODIFICATION: Variables for tracking best model and losses
+    best_loss = float('inf')
+    epoch_losses = []
+
     # start training
-    best_loss = float("inf")
     for e in range(modelConfig["epoch"]):
-        e_loss = 0
+        epoch_loss = 0.0
+        num_batches = 0
         with tqdm(dataloader, dynamic_ncols=True) as tqdmDataLoader:
             for data, labels in tqdmDataLoader:
                 optimizer.zero_grad()
                 x_0 = data.to(device)
-                # MODIFIED: Using mean() is more standard than sum() / 1000
                 loss = trainer(x_0).mean()
                 loss.backward()
-                e_loss += loss.item()
                 torch.nn.utils.clip_grad_norm_(
                     net_model.parameters(), modelConfig["grad_clip"])
                 optimizer.step()
+
+                # Accumulate loss for the epoch average
+                epoch_loss += loss.item()
+                num_batches += 1
+
                 tqdmDataLoader.set_postfix(ordered_dict={
                     "epoch": e,
                     "loss: ": loss.item(),
                     "data shape: ": x_0.shape,
                     "LR": optimizer.state_dict()['param_groups'][0]["lr"]
                 })
+
+        # Calculate and record the average loss for the epoch
+        avg_epoch_loss = epoch_loss / num_batches
+        epoch_losses.append(avg_epoch_loss)
+        print(f"Epoch {e} | Average Loss: {avg_epoch_loss:.4f}")
+
         warmUpScheduler.step()
-        if e_loss < best_loss:
-            best_loss = e_loss
-            torch.save(net_model.state_dict(), os.path.join(
-                modelConfig["save_weight_dir"], 'ckpt_1d_' + "_.pt"))
+
+        # MODIFICATION: Save only the best model
+        if avg_epoch_loss < best_loss:
+            best_loss = avg_epoch_loss
+
+            # Create checkpoint dictionary
+            checkpoint = {
+                'epoch': e,
+                'model_state_dict': net_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': best_loss
+            }
+
+            # Save the single best model checkpoint
+            save_path = os.path.join(modelConfig["save_weight_dir"], 'best_model.pt')
+            torch.save(checkpoint, save_path)
+            print(f"✨ New best model saved at epoch {e} with loss {best_loss:.4f} to {save_path}")
+
+    # MODIFICATION: Plot and save the loss curve after training is finished
+    print("Training finished. Plotting loss curve...")
+    plt.figure(figsize=(10, 6))
+    plt.plot(epoch_losses)
+    plt.yscale('log')  # Use log scale for the y-axis
+    plt.title('Training Loss Over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Average Loss (Log Scale)')
+    plt.grid(True, which="both", ls="--")
+    plot_path = os.path.join(modelConfig["save_weight_dir"], 'training_loss_plot.png')
+    plt.savefig(plot_path)
+    print(f"Loss plot saved to {plot_path}")
+
+    # MODIFICATION: Save the recorded losses to a .pt file
+    losses_save_path = os.path.join(modelConfig["save_weight_dir"], 'training_losses.pt')
+    torch.save(epoch_losses, losses_save_path)
+    print(f"Loss history saved to {losses_save_path}")
 
 
 def eval(modelConfig: Dict):
@@ -72,10 +116,14 @@ def eval(modelConfig: Dict):
 
     # Load Model
     model = ResMLP(T=modelConfig["T"], data_dim=modelConfig["data_len"], num_blocks=4).to(device)
-    ckpt = torch.load(os.path.join(modelConfig["save_weight_dir"], modelConfig["test_load_weight"]),
-                      map_location=device)
-    model.load_state_dict(ckpt)
-    print("Model loaded successfully.")
+
+    # MODIFICATION: Load state_dict from the checkpoint dictionary
+    ckpt_path = os.path.join(modelConfig["save_weight_dir"], modelConfig["test_load_weight"])
+    ckpt = torch.load(ckpt_path, map_location=device)
+    model.load_state_dict(ckpt['model_state_dict'])
+    print(
+        f"Model loaded successfully from {ckpt_path} (trained for {ckpt['epoch']} epochs with loss {ckpt['loss']:.4f}).")
+    model.to(device)  # Make sure model is on the correct device
     model.eval()
 
     sampler = GaussianDiffusionSampler(model, modelConfig["beta_1"], modelConfig["beta_T"], modelConfig["T"]).to(device)
@@ -83,7 +131,6 @@ def eval(modelConfig: Dict):
     # 1. Get original data from the directory
     print("Loading original data for comparison...")
     original_dataset = VectorDataset(data_dir=modelConfig["data_dir"])
-    # Use a DataLoader to efficiently load all data points
     original_dataloader = DataLoader(original_dataset, batch_size=modelConfig["batch_size"], shuffle=False,
                                      num_workers=4)
 
@@ -91,9 +138,8 @@ def eval(modelConfig: Dict):
     for batch, _ in tqdm(original_dataloader, desc="Loading original vectors"):
         original_data_list.append(batch.cpu().numpy())
 
-    # Concatenate all batches and remove the channel dimension
     original_data = np.concatenate(original_data_list, axis=0).squeeze()
-    num_samples = len(original_data)  # Get the exact number of samples from the dataset
+    num_samples = len(original_data)
     print(f"Loaded {num_samples} original data samples.")
 
     # 2. Generate the same number of sampled data
@@ -101,16 +147,15 @@ def eval(modelConfig: Dict):
     batch_size = modelConfig["batch_size"]
     with torch.no_grad():
         for i in tqdm(range(0, num_samples, batch_size), desc="Generating samples"):
-            # Handle the last batch which might be smaller
             current_batch_size = min(batch_size, num_samples - i)
-            noisy_data = torch.randn(size=[current_batch_size, 1, modelConfig["data_len"]], device=device)
+            noisy_data = torch.randn(size=[current_batch_size, modelConfig["data_len"]], device=device)
             sampled_batch = sampler(noisy_data)
             sampled_data_list.append(sampled_batch.cpu().numpy().squeeze())
 
     sampled_data = np.concatenate(sampled_data_list, axis=0)
     print(f"Generated {len(sampled_data)} new data samples.")
 
-    # --- PCA and Plotting (remains the same) ---
+    # --- PCA and Plotting ---
 
     # 3. Apply PCA
     print("Applying PCA...")
@@ -142,31 +187,30 @@ def eval(modelConfig: Dict):
 
 if __name__ == '__main__':
     modelConfig = {
-        "state": "train",  # or "eval"
-        "epoch": 50,
-        "batch_size": 128,  # Can be larger for 1D data
+        "state": "eval",
+        "epoch": 500,
+        "batch_size": 128,
         "T": 1000,
         "channel": 128,
-        "channel_mult": [1, 2, 2, 4],  # For 256 -> 128 -> 64 -> 32 -> 16
-        # REMOVED: "attn": [2],
+        "channel_mult": [1, 2, 2, 4],
         "num_res_blocks": 2,
         "dropout": 0.1,
         "lr": 1e-4,
         "multiplier": 2.,
         "beta_1": 1e-4,
         "beta_T": 0.02,
-        "data_len": 256,  # MODIFIED: from img_size
+        "data_len": 256,
         "grad_clip": 1.,
         "device": 'cuda:0' if torch.cuda.is_available() else 'cpu',
         "training_load_weight": None,
         "data_dir": "../Data/latent_vectors/",
         "save_weight_dir": "./Checkpoints_1D/",
-        "test_load_weight": "ckpt_1d_47_.pt",  # MODIFIED
-        "sampled_dir": "./SampledData/",  # MODIFIED
-        "sampledDataName": "Sampled1DData.png",  # MODIFIED
+        # MODIFICATION: Point to the single best model file
+        "test_load_weight": "best_model.pt",
+        "sampled_dir": "./SampledData/",
+        "sampledDataName": "Sampled1DData.png",
     }
 
-    # Create directories if they don't exist
     if not os.path.exists(modelConfig["save_weight_dir"]):
         os.makedirs(modelConfig["save_weight_dir"])
     if not os.path.exists(modelConfig["sampled_dir"]):

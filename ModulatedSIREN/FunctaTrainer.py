@@ -1,11 +1,15 @@
+import os
+from tqdm import tqdm
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from DataLoader import get_vector_loader
+from torch.utils.data import DataLoader
+
+from DataLoader import VectorFieldDataset
 from FunctaModel import SIRENWithShift
-from Utilities.vector_field_sampler import normalized_random_sample, normalized_meshgrid_sample, interpolate_vector_field
-from tqdm import tqdm
-import os
+from Utilities.SampleAndNormalization import normalized_random_sample, interpolate_vector_field
+
 
 def fit(model, device, data_loader, outer_optimizer, outer_criterion, current_epoch, inner_steps, inner_lr):
     losses = []
@@ -72,19 +76,27 @@ if __name__ == '__main__':
         "outer_learning_rate": 3e-6,
         "inner_learning_rate": 1e-2,
         "inner_steps": 5,
+        "num_workers": 4,
         "device": 'cuda:0' if torch.cuda.is_available() else 'cpu',
-        "checkpoint_path" : 'trained_models/SIRENWithShift_b48_i5.pth',
+        "dataset_dir" : '../Data/cropped_and_sampled_pt_data',
+        "pretrained_dir" : '../Trained_models',
+        "checkpoint_path" : '../Trained_models/SIRENWithShift_b48_i5.pth',
         "using_checkpoint": False,
+        "normalize_vectors": False,
     }
 
     print(f"Using device: {CONFIG['device']}")
-    dataloader = get_vector_loader('./cropped_and_sampled_pt_data', train=True, batch_size=CONFIG["batch_size"])
+
+    dataset = VectorFieldDataset(root_dir=CONFIG['dataset_dir'], normalize_vectors=CONFIG['normalize_vectors'])
+    dataloader = DataLoader(dataset, batch_size=CONFIG['batch_size'], shuffle=True, num_workers=CONFIG['num_workers'], pin_memory=True)
+
     model = SIRENWithShift(CONFIG["input_dim"], CONFIG["latent_dim"], CONFIG["hidden_dim"], CONFIG["hidden_layers"], CONFIG["output_dim"])
     model.to(CONFIG["device"])
+
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["outer_learning_rate"])
     criterion = nn.MSELoss().cuda() if torch.cuda.is_available() else nn.MSELoss()
 
-    os.makedirs('./trained_models', exist_ok=True)
+    os.makedirs(CONFIG['pretrained_dir'], exist_ok=True)
 
     start_epoch = 0
     best_loss = float('Inf')
@@ -102,8 +114,6 @@ if __name__ == '__main__':
         print(f"▶️ Resuming training from epoch {start_epoch}")
     else:
         print("ℹ️ No checkpoint found. Starting training from scratch.")
-
-
 
 
     for epoch in range(start_epoch, CONFIG["epochs"]):

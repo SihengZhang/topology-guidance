@@ -1,19 +1,20 @@
 import torch
 import os
 import glob
-from Utilities.vector_field_sampler import normalize_vector_field
-from torch.utils.data import Dataset, DataLoader
+from Utilities.SampleAndNormalization import normalize_vector_field
+from torch.utils.data import Dataset
 import torchvision.transforms as T
 
 class VectorFieldDataset(Dataset):
     """Custom Dataset for loading 2D vector fields."""
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, normalize_vectors=False):
         """
         Args:
             root_dir (string): Directory with all the vector field files.
         """
         # Get a list of all file paths
         self.file_paths = glob.glob(os.path.join(root_dir, '*.pt'))
+        self.normalize_vectors = normalize_vectors
 
     def __len__(self):
         """Returns the total number of samples."""
@@ -25,35 +26,14 @@ class VectorFieldDataset(Dataset):
         file_path = self.file_paths[idx]
         # Load the tensor from the file
         vector_field = torch.load(file_path)
-        # vector_field = normalize_vector_field(vector_field)
+
+        if self.normalize_vectors:
+            vector_field = normalize_vector_field(vector_field)
 
         # Permute dimensions from (H, W, C) to (C, H, W)
         vector_field = vector_field.permute(2, 0, 1)
 
         return vector_field
-
-def get_vector_loader(
-        root='./cropped_and_sampled_pt_data',
-        train=True,
-        batch_size=64,
-        transform=T.ToTensor(),
-        num_workers=1,
-        pin_memory=True,
-):
-    """
-    :param root:
-    :param train:
-    :param batch_size:
-    :param transform:
-    :param num_workers:
-    :param pin_memory:
-    :return: Dataloader.
-    """
-    dataset = VectorFieldDataset(root)
-    dataloader = DataLoader(
-        dataset, batch_size, shuffle=train, num_workers=num_workers, pin_memory=pin_memory
-    )
-    return dataloader
 
 
 class TensorFileDataset(Dataset):

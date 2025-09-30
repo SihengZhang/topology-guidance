@@ -1,36 +1,37 @@
 import os
+from tqdm import tqdm
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.xpu import device
-from vector_field_sampler import normalized_random_sample, normalized_meshgrid_sample, interpolate_vector_field
-from dataloader import get_vector_loader
-from FunctaModel import SIRENWithShift
-import joblib
-from tqdm import tqdm
+from torch.utils.data import DataLoader
 
-def create_functaset(
+from Utilities.SampleAndNormalization import normalized_meshgrid_sample, interpolate_vector_field
+from DataLoader import VectorFieldDataset
+from FunctaModel import SIRENWithShift
+
+
+def create_latent_vector_set(
         model,
+        device,
         data_loader,
-        inner_steps=1000,
+        inner_steps=10,
         inner_lr=0.01,
+        result_dir = './'
 ):
-    """
-    :param model:
-    :param data_loader:
-    :param inner_steps:
-    :param inner_lr:
-    """
     assert data_loader.batch_size == 1
-    device = next(iter(model.parameters())).device
+
     latent_features = model.latent_features
     inner_criterion = nn.MSELoss().cuda() if torch.cuda.is_available() else nn.MSELoss()
+
     prog_bar = tqdm(data_loader, total=len(data_loader))
+
     i = 1
     for fields in prog_bar:
         fields = fields.to(device)
         coords = normalized_meshgrid_sample(256, 256).to(device)
         latent = torch.zeros(latent_features, requires_grad=True).float().to(device)
+
         inner_optimizer = optim.SGD([latent], lr=inner_lr)
         mse = 0
         # Inner Optimization.
@@ -49,15 +50,33 @@ def create_functaset(
         prog_bar.set_description(f'MSE: {mse}')
 
         pt_tensor = torch.from_numpy(latent.detach().cpu().numpy())
-        torch.save(pt_tensor, os.path.join('./results', f'latent_vector_{i}.pt'))
+        torch.save(pt_tensor, os.path.join(result_dir, f'latent_vector_{i}.pt'))
         i = i + 1
 
 if __name__ == '__main__':
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(device)
-    model = SIRENWithShift(2, 256, 512, 5, 2)
-    pretrained = torch.load('trained_models/SIRENWithShift.pth', map_location=device)
+    CONFIG = {
+        "input_dim" : 2,
+        "output_dim" : 2,
+        "latent_dim" : 256,
+        "hidden_dim" : 512,
+        "hidden_layers" : 5,
+        "inner_steps" : 10,
+        "inner_learning_rate" : 1e-2,
+        "device" : 'cuda:0' if torch.cuda.is_available() else 'cpu',
+        "dataset_dir" : '../Data/cropped_and_sampled_pt_data',
+        "pretrained_path" : '../Trained_models/SIRENWithShift_b48_i5.pth',
+        "latent_vector_dir" : '../Data/latent_vectors',
+        "normalize_vectors" : False,
+    }
+    print(f"Using device: {CONFIG['device']}")
+
+    model = SIRENWithShift(CONFIG["input_dim"], CONFIG["latent_dim"], CONFIG["hidden_dim"], CONFIG["hidden_layers"], CONFIG["output_dim"])
+
+    pretrained = torch.load(CONFIG['pretrained_path'], map_location=CONFIG['device'])
     model.load_state_dict(pretrained['state_dict'])
-    dataloader=get_vector_loader('./sample', train=True, batch_size=1)
-    # dataloader = get_vector_loader('./data_to_get_latent', train=True, batch_size=1)
-    create_functaset(model, dataloader, inner_steps=10)
+
+    dataset = VectorFieldDataset(root_dir=CONFIG['dataset_dir'], normalize_vectors=CONFIG['normalize_vectors'])
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True)
+
+    create_latent_vector_set(model, CONFIG['device'], dataloader, inner_steps=CONFIG['inner_steps'],
+                             inner_lr=CONFIG['inner_learning_rate'], result_dir=CONFIG['latent_vector_dir'])

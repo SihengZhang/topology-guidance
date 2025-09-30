@@ -3,10 +3,13 @@ import re
 import os
 import random
 import torch
-import torch.nn.functional as F
+import vtk
+from vtkmodules.util import numpy_support as nps
 import numpy as np
 import pyvista as pv
 from tqdm import tqdm
+
+from SampleAndNormalization import normalize_vector_field
 
 def amira_mesh_to_vts(filename: str, output_dir: str="vector_field_in_vts"):
     """
@@ -165,105 +168,48 @@ def amira_mesh_to_vts(filename: str, output_dir: str="vector_field_in_vts"):
         return None
 
 
-def vts_to_numpy(filename: str):
+def vts_to_tensor(filename: str, vector_array_name: str='vectors') -> torch.Tensor:
     """
-        Reads an .vts file that defines a vector field on a uniform grid into a numpy array
+    Reads a .vts file that defines a vector field on a uniform grid into a PyTorch tensor.
 
-        Args:
-            filename (str): The path to the AmiraMesh (.am) file.
+    Args:
+        filename (str): The path to the VTK structured mesh (.vts) file.
+        vector_array_name (str, optional): The name of the vector field to extract.
 
-        Returns:
-            np.ndarray: The numpy array of the .vts vector field
+    Returns:
+        torch.Tensor: The PyTorch tensor of the .vts vector field.
     """
-    # 1. Read the .vts file into a PyVista StructuredGrid object
-    grid = pv.read(filename)
+    # 1. Read the .vts file, handling a potential file not found errors
+    try:
+        grid = pv.read(filename)
+    except FileNotFoundError:
+        print(f"❌ Error: The file '{filename}' was not found.")
+        raise
+
+    # 2. Check if the specified vector array name exists
+    if vector_array_name not in grid.point_data:
+        available_arrays = list(grid.point_data.keys())
+        raise KeyError(
+            f"❌ Error: Vector array '{vector_array_name}' not found. "
+            f"Available arrays are: {available_arrays}"
+        )
 
     # 2. Get the original grid dimensions from the object
-    # grid.dimensions return a tuple of (nx, ny, nz), which corresponds to (width, height, depth)
     width, height, _ = grid.dimensions
 
     # 3. Access the flattened vector data array from the grid's point data
-    # This will be a NumPy array of shape (num_points, 3)
-    flat_vectors = grid.point_data['vectors']
+    flat_vectors = grid.point_data[vector_array_name]
 
-    # 4. Reshape the data back into its original 2D grid structure,
-    # You MUST use order='F' (Fortran) to correctly reverse the flattening process
+    # 4. Reshape the data back into its original 2D grid structure
     vector_data_3d = flat_vectors.reshape((height, width, 3), order='F')
 
-    # 5. Extract just the 2D components (vx, vy) by slicing the last axis
-    vector_data_2d = vector_data_3d[:, :, :2]
+    # 5. Extract just the 2D components (vx, vy)
+    vector_data_2d_np = vector_data_3d[:, :, :2]
 
-    return vector_data_2d
+    # 6. Convert the NumPy array to a PyTorch tensor
+    vector_data_tensor = torch.from_numpy(vector_data_2d_np)
 
-
-def random_square_crop(vector_data_2d, crop_size):
-    """
-    Randomly crops a square section from a 2D vector field.
-
-    Args:
-        vector_data_2d (np.ndarray): The input array with shape (height, width, 2).
-        crop_size (int): The side length of the square crop.
-
-    Returns:
-        np.ndarray: The cropped square array with shape (crop_size, crop_size, 2).
-    """
-    # Get the original dimensions
-    original_height, original_width, _ = vector_data_2d.shape
-
-    # Check if the crop size is valid
-    if crop_size > original_height or crop_size > original_width:
-        raise ValueError("Crop size cannot be larger than the original dimensions.")
-
-    # Determine the latest possible starting point for the crop
-    max_start_y = original_height - crop_size
-    max_start_x = original_width - crop_size
-
-    # Randomly select the top-left corner of the crop
-    start_y = np.random.randint(0, max_start_y + 1)
-    start_x = np.random.randint(0, max_start_x + 1)
-
-    # Perform the crop using NumPy slicing ✂️
-    cropped_field = vector_data_2d[
-        start_y : start_y + crop_size,
-        start_x : start_x + crop_size,
-        :
-    ]
-
-    return cropped_field
-
-
-def create_dataset(input_dir: str, output_dir: str, number_of_samples: int, crop_size: int):
-    """
-        Converts a 2D vector field from .vts files to PyTorch .pt files using PyVista.
-
-        Args:
-            input_dir(str): path to the directory containing the .vts files.
-            output_dir (str): Path to the output .pt dir.
-            number_of_samples(int): number of random samples to create.
-            crop_size (int): resolution of the cropped field.
-        """
-    try:
-        # os.path.basename gets the final component
-        dir_name = os.path.basename(os.path.normpath(input_dir))
-        os.makedirs(output_dir, exist_ok=True)
-
-        # 1. Create a list of all files ending with .vts
-        vts_files = [f for f in os.listdir(input_dir) if f.endswith('.vts')]
-
-        # 2. If the list is not empty, choose one file randomly
-        if len(vts_files) == 0:
-            raise ValueError(f"No .vts files found in '{input_dir}'")
-
-        for i in tqdm(range(number_of_samples)):
-            random_filename = random.choice(vts_files)
-            filename = os.path.join(input_dir, random_filename)
-            cropped_field = random_square_crop(vts_to_numpy(filename), crop_size)
-            pt_tensor = torch.from_numpy(cropped_field)
-            torch.save(pt_tensor, os.path.join(output_dir, f'vector_field_{dir_name}_{i:04d}.pt'))
-
-    except FileNotFoundError:
-        print(f"Error: Directory not found at '{input_dir}'")
-        return None
+    return vector_data_tensor
 
 
 def pt_to_vts(filename: str, output_dir: str):
@@ -322,51 +268,73 @@ def pt_to_vts(filename: str, output_dir: str):
     print("✅ Conversion successful!")
 
 
-def vts_to_tensor(file_path: str, vector_array_name: str) -> torch.Tensor:
+def pt_to_vti(filename: str, output_dir: str):
     """
-    Loads a 2D vector field from a .vts file into a PyTorch tensor.
+    Converts a 2D vector field from a PyTorch .pt file to a .vti (VTK ImageData) file.
 
     Args:
-        file_path (str): The path to the .vts file.
-        vector_array_name (str): The name of the vector data array inside the file.
-
-    Returns:
-        torch.Tensor: A PyTorch tensor of shape (height, width, 2).
-
-    Raises:
-        FileNotFoundError: If the specified file does not exist.
-        KeyError: If the vector_array_name is not found in the file's data.
+        filename (str): Path to the input .pt file (e.g., shape 256x256x2).
+        output_dir (str): Path to the output directory for the .vti file.
     """
-    # 1. Read the .vts file, handling a potential file not found errors
     try:
-        grid = pv.read(file_path)
+        print(f"Loading tensor from '{filename}'...")
+        # 1. Load the PyTorch tensor and convert to a NumPy array
+        tensor_data = torch.load(filename, map_location=torch.device('cpu'))
+
+        # NOTE: The function 'normalize_vector_field' was called in the original code but not provided.
+        # It is commented out here. You may need to implement and call it if normalization is required.
+        # tensor_data = normalize_vector_field(tensor_data)
+
+        # Validate tensor shape
+        if not (tensor_data.dim() == 3 and tensor_data.shape[2] == 2):
+            raise ValueError(f"Expected a 3D tensor with 2 components (e.g., shape HxWx2), but got {tensor_data.shape}")
+
+        numpy_data = tensor_data.numpy().astype(np.float32)
+        height, width, _ = numpy_data.shape
+
+        # 2. Create a vtkImageData object
+        # This object represents a uniform grid, which is perfect for this kind of data.
+        imageData = vtk.vtkImageData()
+        imageData.SetDimensions(width, height, 1)  # (nx, ny, nz)
+        imageData.SetSpacing(1.0, 1.0, 1.0)  # Size of each voxel/pixel
+        imageData.SetOrigin(0.0, 0.0, 0.0)  # World coordinates of the bottom-left corner
+
+        # 3. Prepare the vector data and add it to the vtkImageData
+        # The vector data must be 3D (vx, vy, vz). We'll add a zero z-component.
+        vectors_3d = np.zeros((width * height, 3), dtype=np.float32)
+        # Flatten the 2D numpy data and place it into the 3D array
+        vectors_3d[:, :2] = numpy_data.reshape(-1, 2)
+
+        # Convert the NumPy array to a VTK data array
+        vtk_vectors = nps.numpy_to_vtk(vectors_3d, deep=True, array_type=vtk.VTK_FLOAT)
+        vtk_vectors.SetName("VectorField")  # This name will appear in ParaView/Visit
+
+        # Attach the vector data to the points of the grid.
+        # For ImageData, the number of points is width * height * depth.
+        imageData.GetPointData().SetVectors(vtk_vectors)
+        print("VTK ImageData created and vectors assigned.")
+
+        # 4. Write the grid to a .vti file
+        # Use the XML writer for the .vti format.
+        writer = vtk.vtkXMLImageDataWriter()
+        base_name = os.path.basename(filename)
+        base_name_no_ext, _ = os.path.splitext(base_name)
+        vti_file_path = os.path.join(output_dir, f'{base_name_no_ext}.vti')
+
+        os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
+
+        writer.SetFileName(vti_file_path)
+        writer.SetInputData(imageData)
+        writer.Write()  # Execute the write operation
+
+        print(f"Writing .vti file to '{vti_file_path}'...")
+        print("✅ Conversion successful!")
+
     except FileNotFoundError:
-        print(f"❌ Error: The file '{file_path}' was not found.")
-        raise
-
-    # 2. Check if the specified vector array name exists
-    if vector_array_name not in grid.point_data:
-        available_arrays = list(grid.point_data.keys())
-        raise KeyError(
-            f"❌ Error: Vector array '{vector_array_name}' not found. "
-            f"Available arrays are: {available_arrays}"
-        )
-
-    # 3. Get grid dimensions and extract the vector data
-    width, height, _ = grid.dimensions
-    vector_data_numpy = grid.point_data[vector_array_name]
-
-    # 4. Reshape the data and select the X and Y components
-    vector_field_numpy = vector_data_numpy[:, :2].reshape((height, width, 2))
-
-    # 5. Convert to a PyTorch tensor and return
-    vector_tensor = torch.from_numpy(vector_field_numpy).float()
-
-    return vector_tensor
+        print(f"❌ Error: Could not find file {filename}", file=sys.stderr)
+    except Exception as e:
+        print(f"❌ An unexpected error occurred: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    # pt_to_vts("cropped_and_sampled_pt_data/vector_field_0000_0999.pt", "./results/")
-    # amira_mesh_to_vts("./raw_AmiraMesh/0000.am", "./vector_field_in_vts")
-    create_dataset("./vector_field_in_vts/0000", "./data_to_get_latent", 2000, 256)
-    # tensor = vts_to_tensor("./results/vector_field_0000_0000.vts", "VectorField")
+    pt_to_vti("../Data/cropped_and_sampled_pt_data/vector_field_0000_0000.pt", "../Data")
