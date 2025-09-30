@@ -74,4 +74,4 @@ def create_dataset(input_dir: str, output_dir: str, number_of_samples: int, crop
         return None
 
 if __name__ == "__main__":
-    create_dataset('../Data/cropped_and_sampled_pt_data', '../Data/vector_field_in_vts/0000', 5000, 256)
+    create_dataset( '../Data/vector_field_in_vts/0000','../Data/cropped_and_sampled_pt_data', 5000, 256)
