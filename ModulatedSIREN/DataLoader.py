@@ -1,7 +1,7 @@
 import torch
 import os
 import glob
-from Utilities.SampleAndNormalization import normalize_vector_field
+from ..Utilities.SampleAndNormalization import normalize_vector_field
 from torch.utils.data import Dataset
 import torchvision.transforms as T
 

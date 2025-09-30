@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from DataLoader import VectorFieldDataset
 from FunctaModel import SIRENWithShift
-from Utilities.SampleAndNormalization import normalized_random_sample, interpolate_vector_field
+from ..Utilities.SampleAndNormalization import normalized_random_sample, interpolate_vector_field
 
 
 def fit(model, device, data_loader, outer_optimizer, outer_criterion, current_epoch, inner_steps, inner_lr):
@@ -71,16 +71,16 @@ if __name__ == '__main__':
         "latent_dim": 256,
         "hidden_dim": 512,
         "hidden_layers": 5,
-        "batch_size": 48,
-        "epochs": 40,
+        "batch_size": 72,
+        "epochs": 50,
         "outer_learning_rate": 3e-6,
         "inner_learning_rate": 1e-2,
-        "inner_steps": 5,
+        "inner_steps": 7,
         "num_workers": 4,
         "device": 'cuda:0' if torch.cuda.is_available() else 'cpu',
         "dataset_dir" : '../Data/cropped_and_sampled_pt_data',
         "pretrained_dir" : '../Trained_models',
-        "checkpoint_path" : '../Trained_models/SIRENWithShift_b48_i5.pth',
+        "checkpoint_path" : '../Trained_models/SIRENWithShift_b72_i7.pth',
         "using_checkpoint": False,
         "normalize_vectors": False,
     }
