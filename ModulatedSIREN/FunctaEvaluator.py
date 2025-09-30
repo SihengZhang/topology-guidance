@@ -1,9 +1,13 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 import pyvista as pv
 import torch
 
 from FunctaModel import SIRENWithShift
-from ..Utilities.SampleAndNormalization import normalized_meshgrid_sample
+from Utilities.SampleAndNormalization import normalized_meshgrid_sample
 
 if __name__ == '__main__':
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

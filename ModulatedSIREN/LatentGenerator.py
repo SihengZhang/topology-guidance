@@ -1,4 +1,7 @@
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from tqdm import tqdm
 
 import torch
@@ -6,7 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from ..Utilities.SampleAndNormalization import normalized_meshgrid_sample, interpolate_vector_field
+from Utilities.SampleAndNormalization import normalized_meshgrid_sample, interpolate_vector_field
 from DataLoader import VectorFieldDataset
 from FunctaModel import SIRENWithShift
 

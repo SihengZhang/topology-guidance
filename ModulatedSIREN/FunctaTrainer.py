@@ -1,4 +1,7 @@
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from tqdm import tqdm
 
 import torch
@@ -8,7 +11,7 @@ from torch.utils.data import DataLoader
 
 from DataLoader import VectorFieldDataset
 from FunctaModel import SIRENWithShift
-from ..Utilities.SampleAndNormalization import normalized_random_sample, interpolate_vector_field
+from Utilities.SampleAndNormalization import normalized_random_sample, interpolate_vector_field
 
 
 def fit(model, device, data_loader, outer_optimizer, outer_criterion, current_epoch, inner_steps, inner_lr):

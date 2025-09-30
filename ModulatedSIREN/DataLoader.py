@@ -1,7 +1,10 @@
-import torch
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import torch
 import glob
-from ..Utilities.SampleAndNormalization import normalize_vector_field
+from Utilities.SampleAndNormalization import normalize_vector_field
 from torch.utils.data import Dataset
 import torchvision.transforms as T
 
